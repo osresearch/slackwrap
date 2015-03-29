@@ -78,6 +78,7 @@ sub nonblock
 }
 
 nonblock($in);
+nonblock($out);
 
 sub check_for_output
 {

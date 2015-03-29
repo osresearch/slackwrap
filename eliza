@@ -1,0 +1,14 @@
+#!/opt/local/bin/perl
+# Eliza!
+use Chatbot::Eliza;
+
+my $e = Chatbot::Eliza->new();
+
+$|++; # turn off buffering out stdout
+
+print $e->transform('hello'), "\n";
+
+while(<>)
+{
+	print $e->transform($_), "\n";
+}
