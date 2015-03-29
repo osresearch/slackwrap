@@ -1,0 +1,202 @@
+#!/opt/local/bin/perl
+#
+# Connect a normal Unix program to the slack chat system.
+# SSL errors require Crypt::SSLeay, so we include it here.
+#
+use warnings;
+use strict;
+use FindBin '$Bin';
+use IPC::Open2;
+use Fcntl;
+use Data::Dumper;
+use LWP::UserAgent;
+use Getopt::Long qw(:config no_ignore_case require_order);
+use JSON;
+
+use Net::SSL;
+my $lwp = LWP::UserAgent->new(
+	agent	=> "slack-wrap/0.0000",
+	ssl_opts => { verify_hostname => 0 }, # shouldn't do this
+);
+
+my $usage = <<"";
+Usage: $0 [options] -- cmd args...
+Options:
+  -t | --token token     Authorization token (default is to read from file)
+  -c | --channel id      Channel ID (required)
+  -u | --user name       User name to use for the bot
+  -i | --interval secs   Time between polls (default 0.5 seconds)
+  -I | --ignore RE       Regular expression to ignore on commands
+  -F | --filter RE       Regular expression to apply to output from command
+
+my $log = \*STDERR;
+my $base_url = "https://slack.com/api";
+my $token;
+my $channel;
+my $user;
+my $filter;
+my @ignore;
+my $sleep_interval = 0.5;
+
+GetOptions(
+	"t|token=s"	=> \$token,
+	"c|channel=s"	=> \$channel,
+	"u|username=s"	=> \$user,
+	"i|interval=f"	=> \$sleep_interval,
+	"I|ignore=s"	=> \@ignore,
+	"F|filter=s"	=> \$filter,
+	"h|?|help"	=> sub { print $usage; exit 0; },
+) or die $usage;
+
+my $cmd = shift
+	or die "Command must be specified!\n";
+
+die "Channel must be specified!\n"
+	unless defined $channel;
+
+# compile all of the ignore regular expressions
+for (@ignore)
+{
+	$_ = qr/$_/i;
+}
+
+# compile the filtering regular expressions
+$filter = eval "sub { local \$_ = shift; $filter; return \$_; }"
+	if defined $filter;
+
+$token ||= do "$Bin/slack.token";
+$user ||= $cmd;
+
+my $pid = open2(my $in, my $out, $cmd, @ARGV)
+	or die "exec '$cmd': failed: $!\n";
+
+sub nonblock
+{
+	my $in = shift;
+	my $old_flags = fcntl($in, F_GETFL, 0);
+	fcntl($in, F_SETFL, $old_flags | O_NONBLOCK);
+}
+
+nonblock($in);
+
+sub check_for_output
+{
+	my $in = shift;
+	my $line;
+	sysread $in, $line, 1024;
+
+	return $line;
+}
+
+my $last_time = time();
+my $json = JSON->new->utf8->pretty(1);
+
+
+sub ignore
+{
+	my $text = shift;
+
+	for my $re (@ignore)
+	{
+		return 1 if $text =~ $re;
+	}
+
+	# none of the ignore regular expressions matched,
+	# process this one
+	return 0;
+}
+
+
+sub check_for_input
+{
+	my $rc = $lwp->post("$base_url/channels.history", {
+		token	=> $token,
+		channel	=> $channel,
+		oldest => $last_time,
+		count => 1000,
+	}) or die "unable to get: $!\n";
+
+	unless ($rc->is_success)
+	{
+		die "get failed\n";
+	}
+
+	my $j = $json->decode($rc->decoded_content);
+	my @lines;
+
+	#print Dumper($j->{ok});
+	#print Dumper($j->{messages});
+	#print Dumper($j->{has_more});
+	my $lines = 0;
+	my $total_lines = 0;
+
+	# ignore empty messages
+	return unless @{$j->{messages}};
+
+	for my $msg (@{$j->{messages}})
+	{
+		#print Dumper($msg), "\n";
+
+		$total_lines++;
+		if ($msg->{ts} > $last_time)
+		{
+			warn "ts: $msg->{ts} > $last_time\n";
+			$last_time = $msg->{ts};
+		}
+
+		if ($msg->{subtype})
+		{
+			# ignore all subtyped messages
+			next;
+			next if $msg->{subtype} eq 'bot_message';
+		}
+
+		my $text = $msg->{text};
+
+		next if ignore($text);
+
+		push @lines, $text;
+		$lines++;
+	}
+
+	warn "$lines/$total_lines\n";
+	return @lines;
+}
+
+
+sub send_to_slack
+{
+	my $text = shift;
+
+	# reformat the text to avoid reflows; broken
+	#$text =~ s/(?<!\n)\n(?!\n)/ /msg;
+
+	my $rc = $lwp->post("$base_url/chat.postMessage", {
+		token => $token,
+		channel => $channel,
+		text => $text,
+		username => $user,
+		#as_user => "false",
+	} ) or die "unable to post: $!\n";
+
+	print "post:", Dumper($rc);
+}
+
+
+while(1)
+{
+	my $data = check_for_output($in);
+	if ($data)
+	{
+		print "read:\n$data\n----\n" if $data;
+
+		$data = $filter->($data) if defined $filter;
+
+		send_to_slack($data);
+	}
+
+	my @lines = check_for_input(\*STDIN);
+	print $out "$_\n" for @lines;
+
+	sleep($sleep_interval);
+}
