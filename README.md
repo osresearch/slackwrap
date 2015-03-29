@@ -29,7 +29,7 @@ Usage
 
 slack-frotz
 ===
-(frotz)[http://frotz.sourceforge.net/], the Interactive Fiction
+[frotz](http://frotz.sourceforge.net/), the Interactive Fiction
 Z-machine interpreter, is an easy thing to tie into slack.  It waits for
 "commands" on the slack channel and feeds them into the text
 adventure game using the dumb-terminal version, `dfrotz`, that is
