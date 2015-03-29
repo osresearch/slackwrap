@@ -6,6 +6,7 @@ It has a fairly simple REST API that is easy to script with external
 programs.
 
 !(Slack Web API showing token)[https://farm9.staticflickr.com/8715/16761229497_910c9c1cfc.jpg]
+
 This is a set of tools that can be used to wrap stdin/stdout of
 normal programs to make them interact with slack. You will need to
 create a file `slack.token` that contains your access token,
