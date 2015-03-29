@@ -1,0 +1,157 @@
+#!/opt/local/bin/perl
+#
+# Connect frotz to the slack chat system.
+# SSL errors require Crypt::SSLeay, so we include it here.
+#
+use warnings;
+use strict;
+use FindBin '$Bin';
+use IPC::Open2;
+use Fcntl;
+use Data::Dumper;
+use LWP::UserAgent;
+use JSON;
+
+use Net::SSL;
+my $lwp = LWP::UserAgent->new(
+	agent	=> "slack-frotz/0.0000",
+	ssl_opts => { verify_hostname => 0 }, # shouldn't do this
+);
+
+my $log = \*STDERR;
+my $game = shift || "trinity.z3";
+my $base_url = "https://slack.com/api";
+my $token = do "$Bin/slack.token";
+#my $channel = "#frotz";
+my $channel_id = "C0454BJ1A";
+
+my $pid = open2(my $in, my $out, "./dfrotz",  $game)
+	or die "frotz failed $game: $!\n";
+
+sub nonblock
+{
+	my $in = shift;
+	my $old_flags = fcntl($in, F_GETFL, 0);
+	fcntl($in, F_SETFL, $old_flags | O_NONBLOCK);
+}
+
+nonblock($in);
+nonblock(\*STDIN);
+
+sub check_for_output
+{
+	my $in = shift;
+	my $line;
+	sysread $in, $line, 1024;
+
+	return $line;
+}
+
+my $last_time = time();
+my $json = JSON->new->utf8->pretty(1);
+
+sub check_for_input
+{
+	my $rc = $lwp->post("$base_url/channels.history", {
+		token	=> $token,
+		channel	=> $channel_id,
+		oldest => $last_time,
+		count => 1000,
+	}) or die "unable to get: $!\n";
+
+	unless ($rc->is_success)
+	{
+		die "get failed\n";
+	}
+
+	my $j = $json->decode($rc->decoded_content);
+	my @lines;
+
+	#print Dumper($j->{ok});
+	#print Dumper($j->{messages});
+	#print Dumper($j->{has_more});
+	my $lines = 0;
+	my $total_lines = 0;
+
+	for my $msg (@{$j->{messages}})
+	{
+		print Dumper($msg), "\n";
+
+		$total_lines++;
+		if ($msg->{ts} > $last_time)
+		{
+			warn "ts: $msg->{ts} > $last_time\n";
+			$last_time = $msg->{ts};
+		}
+
+		if ($msg->{subtype})
+		{
+			# ignore all subtyped messages
+			next;
+			next if $msg->{subtype} eq 'bot_message';
+		}
+
+		my $text = $msg->{text};
+
+		next if $text =~ /^</i;
+		next if $text =~ /^quit$/i;
+		next if $text =~ /^q$/i;
+		next if $text =~ /^\//;
+
+		push @lines, $text;
+		$lines++;
+	}
+
+	#warn "$lines/$total_lines\n";
+	return @lines;
+}
+
+
+# wait for a "start" message to show up
+while (1)
+{
+	my @lines = check_for_input();
+	last if grep /^start$/, @lines;
+
+	sleep 1;
+}
+
+# send a go to the game
+print $out "\n";
+
+
+sub send_to_slack
+{
+	my $text = shift;
+
+	# reformat the text to avoid reflows; broken
+	#$text =~ s/(?<!\n)\n(?!\n)/ /msg;
+
+	my $rc = $lwp->post("$base_url/chat.postMessage", {
+		token => $token,
+		channel => $channel_id,
+		text => $text,
+		username => "Frotz",
+		#as_user => "false",
+	} ) or die "unable to post: $!\n";
+
+	print "post:", Dumper($rc);
+}
+
+
+while(1)
+{
+	my $data = check_for_output($in);
+	if ($data)
+	{
+		# trim the prompt if there is one
+		$data =~ s/^>\s*>\s*$//msg;
+		print "read:\n$data\n----\n" if $data;
+		send_to_slack($data);
+	}
+
+	my @lines = check_for_input(\*STDIN);
+	print $out "$_\n" for @lines;
+
+	sleep(1);
+}
