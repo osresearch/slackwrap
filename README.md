@@ -5,7 +5,7 @@ slack.com is a shared chat room, sort of like a web-based IRC.
 It has a fairly simple REST API that is easy to script with external
 programs.
 
-!(Slack Web API showing token)[https://farm9.staticflickr.com/8715/16761229497_910c9c1cfc.jpg]
+![Slack Web API showing token](https://farm9.staticflickr.com/8715/16761229497_910c9c1cfc.jpg)
 
 This is a set of tools that can be used to wrap stdin/stdout of
 normal programs to make them interact with slack. You will need to
@@ -48,3 +48,9 @@ to shutdown the program.
 
 The output filter is also used to remove the classic `>` prompt from
 the printed results.
+
+eliza
+===
+Eliza is the classic chat bot and is used to demonstrate the wrapper code.
+Note that is is necessary to turn off buffering on stdout (`$|++`) to have
+it flush after each print.
