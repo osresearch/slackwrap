@@ -130,7 +130,7 @@ $s->users();
 sub find_user
 {
 	my $user = shift;
-	warn "looking up '$user'\n";
+
 	for my $uid (keys %{$s->{users}})
 	{
 		next unless $s->{users}{$uid} eq $user;
