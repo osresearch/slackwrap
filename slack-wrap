@@ -65,6 +65,26 @@ GetOptions(
 # Read the token from a file, unless it was specified on the command line
 $token ||= do "$Bin/slack.token";
 
+my %usernames;
+
+if ($print_user)
+{
+	# fetch the user id map
+	my $rc = $lwp->post("$base_url/users.list", {
+		token => $token,
+	} ) or die "unable to get channels $!\n";
+
+	my $j = $json->decode($rc->decoded_content);
+	print STDERR Dumper($j)
+		if $verbose;
+
+	for my $user (@{$j->{members}})
+	{
+		$usernames{$user->{id}} = $user->{profile}{real_name};
+	}
+}
+
+
 if ($list_channels)
 {
 	my $rc = $lwp->post("$base_url/channels.list", {
@@ -207,8 +227,12 @@ sub check_for_input
 
 		next if ignore($text);
 
-		$text = $msg->{user} . ": $text"
-			if $print_user;
+		if ($print_user)
+		{
+			my $uid = $msg->{user};
+			my $user = $usernames{$uid} ||= $uid;
+			$text = "$user: $text";
+		}
 
 		push @lines, $text;
 		$lines++;
