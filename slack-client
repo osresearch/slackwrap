@@ -1,0 +1,96 @@
+#!/opt/local/bin/perl
+#
+# A command line slack client.
+# SSL errors require Crypt::SSLeay, so we include it here.
+#
+use warnings;
+use strict;
+use FindBin '$Bin';
+use lib "$Bin/";
+use Slack;
+use threads;
+use Term::ReadLine;
+use Getopt::Long qw(:config no_ignore_case require_order);
+
+my $usage = <<"";
+Usage: $0 [options] -- cmd args...
+Options:
+  -v | --verbose         Print debugging info on packets
+  -t | --token token     Authorization token (default is to read from file)
+  -c | --channel id      Channel ID (required)
+  -l | --list-channels   List channels
+  -u | --user name       User name to use for the bot
+  -i | --interval secs   Time between polls (default 0.5 seconds)
+  -I | --ignore RE       Regular expression to ignore on commands
+  -F | --filter RE       Regular expression to apply to output from command
+  -s | --stdin           Read/write from stdin/stdout instead of a command
+
+my $log = \*STDERR;
+my $base_url = "https://slack.com/api";
+my $token;
+my $channel;
+my $user;
+my $filter;
+my @ignore;
+my $sleep_interval = 0.5;
+my $use_stdin;
+my $print_user;
+my $list_channels;
+my $verbose;
+
+GetOptions(
+	"t|token=s"	=> \$token,
+	"c|channel=s"	=> \$channel,
+	"l|list-channels+" => \$list_channels,
+	"u|username=s"	=> \$user,
+	"i|interval=f"	=> \$sleep_interval,
+	"I|ignore=s"	=> \@ignore,
+	"F|filter=s"	=> \$filter,
+	"s|stdin+"	=> \$use_stdin,
+	"v|verbose+"	=> \$verbose,
+	"h|?|help"	=> sub { print $usage; exit 0; },
+) or die $usage;
+
+# Read the token from a file, unless it was specified on the command line
+$token ||= do "$Bin/slack.token";
+
+my $s = Slack->new($token, $user)
+	or die "Unable to create slack\n";
+
+die "Channel must be specified!\n"
+	unless defined $channel;
+
+$s->{channel} = $s->channels()->{$channel}
+	or die "$channel: unknown channel\n";
+
+
+my $term = Term::ReadLine->new("slack");
+my $listener = new threads( \&listener );
+
+
+sub listener
+{
+	warn "waiting for messages\n";
+	while (1)
+	{
+		sleep($sleep_interval);
+
+		my @lines = $s->messages()
+			or next;
+
+		for (@lines)
+		{
+			print "$_->[0]: $_->[1]\n";
+		}
+	}
+}
+
+my $prompt = "> ";
+
+warn "Waiting for input\n";
+while( defined(my $line = $term->readline($prompt)) )
+{
+	$s->send($line);
+}   
+
+__END__
