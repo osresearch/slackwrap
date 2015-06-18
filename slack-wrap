@@ -19,15 +19,21 @@ my $lwp = LWP::UserAgent->new(
 	ssl_opts => { verify_hostname => 0 }, # shouldn't do this
 );
 
+my $json = JSON->new->utf8->pretty(1);
+
 my $usage = <<"";
 Usage: $0 [options] -- cmd args...
 Options:
+  -v | --verbose         Print debugging info on packets
   -t | --token token     Authorization token (default is to read from file)
   -c | --channel id      Channel ID (required)
+  -l | --list-channels   List channels
   -u | --user name       User name to use for the bot
   -i | --interval secs   Time between polls (default 0.5 seconds)
   -I | --ignore RE       Regular expression to ignore on commands
   -F | --filter RE       Regular expression to apply to output from command
+  -s | --stdin           Read/write from stdin/stdout instead of a command
+  -p | --print-user      Print the user name of the poster
 
 my $log = \*STDERR;
 my $base_url = "https://slack.com/api";
@@ -37,22 +43,62 @@ my $user;
 my $filter;
 my @ignore;
 my $sleep_interval = 0.5;
+my $use_stdin;
+my $print_user;
+my $list_channels;
+my $verbose;
 
 GetOptions(
 	"t|token=s"	=> \$token,
 	"c|channel=s"	=> \$channel,
+	"l|list-channels+" => \$list_channels,
 	"u|username=s"	=> \$user,
 	"i|interval=f"	=> \$sleep_interval,
 	"I|ignore=s"	=> \@ignore,
 	"F|filter=s"	=> \$filter,
+	"s|stdin+"	=> \$use_stdin,
+	"v|verbose+"	=> \$verbose,
+	"p|print-user+"	=> \$print_user,
 	"h|?|help"	=> sub { print $usage; exit 0; },
 ) or die $usage;
 
-my $cmd = shift
-	or die "Command must be specified!\n";
+# Read the token from a file, unless it was specified on the command line
+$token ||= do "$Bin/slack.token";
+
+if ($list_channels)
+{
+	my $rc = $lwp->post("$base_url/channels.list", {
+		token => $token,
+	} ) or die "unable to get channels $!\n";
+
+	my $j = $json->decode($rc->decoded_content);
+	print STDERR Dumper($j)
+		if $verbose;
+
+	my $channels = $j->{channels}
+		or die "Unknown response?\n";
+
+	for my $c (@$channels)
+	{
+		my $name = $c->{name};
+		my $id = $c->{id};
+		print "$name: $id\n";
+	}
+	
+	exit 0;
+}
 
 die "Channel must be specified!\n"
 	unless defined $channel;
+
+my $cmd;
+if ($use_stdin)
+{
+	die "Excess arguments?\n" if @ARGV;
+} else {
+	$cmd = shift
+		or die "Command must be specified!\n";
+}
 
 # compile all of the ignore regular expressions
 for (@ignore)
@@ -64,11 +110,16 @@ for (@ignore)
 $filter = eval "sub { local \$_ = shift; $filter; return \$_; }"
 	if defined $filter;
 
-$token ||= do "$Bin/slack.token";
 $user ||= $cmd;
 
-my $pid = open2(my $in, my $out, $cmd, @ARGV)
-	or die "exec '$cmd': failed: $!\n";
+my $in = \*STDIN;
+my $out = \*STDOUT;
+
+unless($use_stdin)
+{
+	my $pid = open2($in, $out, $cmd, @ARGV)
+			or die "exec '$cmd': failed: $!\n";
+}
 
 sub nonblock
 {
@@ -90,7 +141,6 @@ sub check_for_output
 }
 
 my $last_time = time();
-my $json = JSON->new->utf8->pretty(1);
 
 
 sub ignore
@@ -136,7 +186,8 @@ sub check_for_input
 
 	for my $msg (@{$j->{messages}})
 	{
-		#print Dumper($msg), "\n";
+		print STDERR Dumper($msg), "\n"
+			if $verbose;
 
 		$total_lines++;
 		if ($msg->{ts} > $last_time)
@@ -155,6 +206,9 @@ sub check_for_input
 		my $text = $msg->{text};
 
 		next if ignore($text);
+
+		$text = $msg->{user} . ": $text"
+			if $print_user;
 
 		push @lines, $text;
 		$lines++;
