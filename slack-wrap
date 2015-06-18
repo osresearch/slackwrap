@@ -189,7 +189,9 @@ sub check_for_input
 
 	unless ($rc->is_success)
 	{
-		die "get failed\n";
+		warn "get failed; sleeping\n";
+		sleep 1;
+		return;
 	}
 
 	my $j = $json->decode($rc->decoded_content);
@@ -212,7 +214,7 @@ sub check_for_input
 		$total_lines++;
 		if ($msg->{ts} > $last_time)
 		{
-			warn "ts: $msg->{ts} > $last_time\n";
+			warn "ts: $msg->{ts} > $last_time\n" if $verbose;
 			$last_time = $msg->{ts};
 		}
 
@@ -238,7 +240,7 @@ sub check_for_input
 		$lines++;
 	}
 
-	warn "$lines/$total_lines\n";
+	warn "$lines/$total_lines\n" if $verbose;
 	return @lines;
 }
 
@@ -258,7 +260,8 @@ sub send_to_slack
 		#as_user => "false",
 	} ) or die "unable to post: $!\n";
 
-	print "post:", Dumper($rc);
+	print STDERR "post:", Dumper($rc)
+		if $verbose;
 }
 
 
@@ -267,7 +270,7 @@ while(1)
 	my $data = check_for_output($in);
 	if ($data)
 	{
-		print "read:\n$data\n----\n" if $data;
+		print STDERR "read:\n$data\n----\n" if $data and $verbose;
 
 		$data = $filter->($data) if defined $filter;
 
