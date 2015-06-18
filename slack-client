@@ -68,6 +68,28 @@ $s->{channel} = $s->channels()->{$channel}
 my $term = Term::ReadLine->new("slack");
 my $listener = new threads( \&listener );
 
+my $saved_point;
+my $saved_line;
+
+sub rl_hide
+{
+	$saved_point = $term->{point};
+	$saved_line  = $term->{line_buffer};
+
+	$term->rl_set_prompt("");
+	$term->{line_buffer} = "";
+	$term->rl_redisplay;
+}
+
+sub rl_show
+{
+	if (defined $saved_point) {
+		$term->rl_set_prompt("> ");
+		$term->{line_buffer} = $saved_line;
+		$term->{point}       = $saved_point;
+		$term->redisplay;
+	}
+}
 
 sub listener
 {
@@ -79,6 +101,7 @@ sub listener
 		my @lines = $s->messages()
 			or next;
 
+		rl_hide();
 		for my $line (@lines)
 		{
 			print LOCALCOLOR YELLOW "$line->[0]: ";
@@ -94,6 +117,10 @@ sub listener
 				
 			print "$_\n";
 		}
+
+		# ask readline to redisplay
+		#$term->redisplay();
+		rl_show();
 	}
 }
 
