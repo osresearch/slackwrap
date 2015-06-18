@@ -79,10 +79,20 @@ sub listener
 		my @lines = $s->messages()
 			or next;
 
-		for (@lines)
+		for my $line (@lines)
 		{
-			print PUSHCOLOR YELLOW "$_->[0]:";
-			print POPCOLOR " $_->[1]\n";
+			print LOCALCOLOR YELLOW "$line->[0]: ";
+
+			# filter the text
+			local $_ = $line->[1];
+
+			# replace entities
+			s/&lt;/>/msg;
+
+			# replace the user names
+			s/<\@(U[^>]*)>/LOCALCOLOR BOLD $s->uid2user($1)/msge;
+				
+			print "$_\n";
 		}
 	}
 }
