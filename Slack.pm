@@ -89,7 +89,7 @@ sub users
 
 	for my $user (@{$j->{members}})
 	{
-		$s->{users}{$user->{id}} = $user->{profile}{real_name};
+		$s->{users}{$user->{id}} = $user->{name};
 	}
 
 	return $s->{users};

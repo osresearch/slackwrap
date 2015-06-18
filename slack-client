@@ -10,6 +10,7 @@ use lib "$Bin/";
 use Slack;
 use threads;
 use Term::ReadLine;
+use Term::ANSIColor 2.00 qw(:pushpop);
 use Getopt::Long qw(:config no_ignore_case require_order);
 
 my $usage = <<"";
@@ -80,7 +81,8 @@ sub listener
 
 		for (@lines)
 		{
-			print "$_->[0]: $_->[1]\n";
+			print PUSHCOLOR YELLOW "$_->[0]:";
+			print POPCOLOR " $_->[1]\n";
 		}
 	}
 }
