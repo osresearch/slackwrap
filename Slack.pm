@@ -19,7 +19,7 @@ sub new
 {
 	my $class = shift;
 	my $token = shift;
-	my $user = shift;
+	my $user = shift || '';
 
 	bless {
 		json => JSON->new->utf8->pretty(1),
@@ -175,11 +175,15 @@ sub send
 	# reformat the text to avoid reflows; broken
 	#$text =~ s/(?<!\n)\n(?!\n)/ /msg;
 
+	# set as_user to true if the user is not defined;
+	# this will use the user of the token.  Otherwise
+	# set the username and as_user=false, which will
+	# flag this as a bot posting.
 	my $j = $s->api("chat.postMessage",
 		channel => $s->{channel},
 		username => $s->{user},
 		text => $text,
-		as_user => "true",
+		as_user => $s->{user} ? "false" : "true",
 	) or return;
 
 	print STDERR "post:", Dumper($j)

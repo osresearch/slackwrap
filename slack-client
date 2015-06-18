@@ -20,7 +20,7 @@ Options:
   -t | --token token     Authorization token (default is to read from file)
   -c | --channel id      Channel ID (required)
   -l | --list-channels   List channels
-  -u | --user name       User name to use for the bot
+  -u | --user name       User name to use as a bot
   -i | --interval secs   Time between polls (default 0.5 seconds)
   -I | --ignore RE       Regular expression to ignore on commands
   -F | --filter RE       Regular expression to apply to output from command
