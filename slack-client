@@ -113,7 +113,7 @@ sub listener
 			s/&lt;/>/msg;
 
 			# replace the user names
-			s/<\@(U[^>]*)>/LOCALCOLOR BOLD $s->uid2user($1)/msge;
+			s/<\@(U[^>]*)>/LOCALCOLOR BOLD "@".$s->uid2user($1)/msge;
 				
 			print "$_\n";
 		}
@@ -125,10 +125,27 @@ sub listener
 }
 
 my $prompt = "> ";
+$s->users();
+
+sub find_user
+{
+	my $user = shift;
+	warn "looking up '$user'\n";
+	for my $uid (keys %{$s->{users}})
+	{
+		next unless $s->{users}{$uid} eq $user;
+		return "<\@$uid>";
+	}
+
+	return "\@$user";
+}
 
 warn "Waiting for input\n";
 while( defined(my $line = $term->readline($prompt)) )
 {
+	# attempt to find any usernames
+	$line =~ s/\@(\w+)/find_user($1)/msge;
+
 	$s->send($line);
 }   
 
