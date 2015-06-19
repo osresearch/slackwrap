@@ -121,9 +121,11 @@ sub process_command
 
 	if ($line =~ m:^/list:)
 	{
-		for my $c (keys %{$s->{channelnames}})
+		for my $name (keys %{$s->{channelnames}})
 		{
-			print "$c\n";
+			my $channel = $s->{channelnames}{$name};
+			my $flag = $watch_list{$channel->{id}} ? " *" : '';
+			print "$name$flag\n";
 		}
 		return;
 	}
@@ -176,7 +178,9 @@ $term = AnyEvent::ReadLine::Gnu->new(
 
 		if ($line =~ m:^/:)
 		{
+			$term->hide();
 			process_command($line);
+			$term->show();
 		} elsif (not defined $s->{channel})
 		{
 			warn "No channel selected! Use /join to join a channel\n";
