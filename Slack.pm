@@ -12,6 +12,7 @@ use Data::Dumper;
 use LWP::UserAgent;
 use JSON;
 use Net::SSL;
+use AnyEvent::WebSocket::Client;
 
 my $base_url = "https://slack.com/api";
 
@@ -32,8 +33,8 @@ sub new
 		last_time => time(),
 		verbose => 0,
 
-		users => {},
-		channels => {},
+		#users => {},
+		#channels => {},
 	}, $class;
 }
 
@@ -65,17 +66,33 @@ sub api
 }
 
 
-sub uid2user
+sub username
 {
 	my $s = shift;
 	my $uid = shift;
 
-	return $s->{users}{$uid} if exists $s->{users}{$uid};
+	return $s->{users}{$uid}{name} if exists $s->{users}{$uid};
+	return $uid;
+}
 
-	# refresh the user uids
-	$s->users();
 
-	return $s->{users}->{$uid} ||= $uid;
+sub channel
+{
+	my $s = shift;
+	my $id = shift;
+
+	return $s->{channels}{$id}{name} if exists $s->{channels}{$id};
+	return;
+}
+
+
+sub channel_id
+{
+	my $s = shift;
+	my $name = shift;
+
+	return unless exists $s->{channelnames};
+	return $s->{channelnames}{$name}{id};
 }
 
 
@@ -89,7 +106,8 @@ sub users
 
 	for my $user (@{$j->{members}})
 	{
-		$s->{users}{$user->{id}} = $user->{name};
+		$s->{users}{$user->{id}} = $user;
+		$s->{usernames}{$user->{name}} = $user;
 	}
 
 	return $s->{users};
@@ -191,4 +209,78 @@ sub send
 
 	return 1;
 }
+
+
+sub websocket
+{
+	my $s = shift;
+	my %handlers = @_;
+
+	my $j = $s->api("rtm.start");
+	my $url = $j->{url};
+	#print Dumper($j);
+	warn "URL: $url\n" if $s->{verbose};
+
+	# populate the channels and both fwd/rev username maps
+	for my $c (@{$j->{channels}})
+	{
+		$s->{channels}{$c->{id}} = $c;
+		$s->{channelnames}{$c->{name}} = $c;
+	}
+
+	for my $u (@{$j->{users}})
+	{
+		$s->{users}{$u->{id}} = $u;
+		$s->{usernames}{$u->{name}} = $u;
+	}
+	
+	my $client = AnyEvent::WebSocket::Client->new;
+
+	$client->connect($url)->cb(sub {
+		# make $connection an our variable rather than
+		# my so that it will stick around.  Once the
+		# connection falls out of scope any callbacks
+		# tied to it will be destroyed.
+		warn "calling first recv\n";
+		our $connection = eval { shift->recv() };
+		if($@) {
+			# handle error...
+			warn $@;
+			return;
+		}
+
+
+		# recieve message from the websocket...
+		$connection->on(each_message => sub {
+			my ($connection, $message) = @_;
+			warn Dumper($message) if $s->{verbose};
+
+			my $j = $s->{json}->decode($message->{body});
+			my $type = $j->{type} || "unknown";
+			if (exists $handlers{$type})
+			{
+				$handlers{$type}->($s, $j);
+			} elsif (exists $handlers{debug})
+			{
+				$handlers{debug}->($s, $j);
+			} else {
+				warn "$type: Unhandled.\n", Dumper($j);
+			}
+
+			return 1;
+		});
+
+		# handle a closed connection...
+		$connection->on(finish => sub {
+			my($connection) = @_;
+
+			warn "Websocket closed!\n" if $s->{verbose};
+			$handlers{close}->($s) if exists $handlers{close};
+		});
+	});
+
+	# Never returns
+	AnyEvent->condvar->recv();
+}
+
 __END__

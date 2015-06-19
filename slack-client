@@ -1,6 +1,6 @@
 #!/opt/local/bin/perl
 #
-# A command line slack client.
+# A command line slack client using the Slack websocket API
 # SSL errors require Crypt::SSLeay, so we include it here.
 #
 use warnings;
@@ -8,46 +8,32 @@ use strict;
 use FindBin '$Bin';
 use lib "$Bin/";
 use Slack;
-use threads;
-use Term::ReadLine;
+use Data::Dumper;
+use AnyEvent::ReadLine::Gnu;
+#use Term::ReadLine;
 use Term::ANSIColor 2.00 qw(:pushpop);
 use Getopt::Long qw(:config no_ignore_case require_order);
+use POSIX 'strftime';
 
 my $usage = <<"";
-Usage: $0 [options] -- cmd args...
+Usage: $0 [options]
 Options:
   -v | --verbose         Print debugging info on packets
   -t | --token token     Authorization token (default is to read from file)
-  -c | --channel id      Channel ID (required)
-  -l | --list-channels   List channels
   -u | --user name       User name to use as a bot
-  -i | --interval secs   Time between polls (default 0.5 seconds)
-  -I | --ignore RE       Regular expression to ignore on commands
-  -F | --filter RE       Regular expression to apply to output from command
-  -s | --stdin           Read/write from stdin/stdout instead of a command
+  -c | --channel name    Channel to send to
 
 my $log = \*STDERR;
-my $base_url = "https://slack.com/api";
 my $token;
 my $channel;
 my $user;
-my $filter;
-my @ignore;
-my $sleep_interval = 0.5;
-my $use_stdin;
-my $print_user;
-my $list_channels;
 my $verbose;
+my %watch_list;
 
 GetOptions(
 	"t|token=s"	=> \$token,
-	"c|channel=s"	=> \$channel,
-	"l|list-channels+" => \$list_channels,
 	"u|username=s"	=> \$user,
-	"i|interval=f"	=> \$sleep_interval,
-	"I|ignore=s"	=> \@ignore,
-	"F|filter=s"	=> \$filter,
-	"s|stdin+"	=> \$use_stdin,
+	"c|channel=s"	=> \$channel,
 	"v|verbose+"	=> \$verbose,
 	"h|?|help"	=> sub { print $usage; exit 0; },
 ) or die $usage;
@@ -58,95 +44,175 @@ $token ||= do "$Bin/slack.token";
 my $s = Slack->new($token, $user)
 	or die "Unable to create slack\n";
 
-die "Channel must be specified!\n"
-	unless defined $channel;
+my $term;
 
-$s->{channel} = $s->channels()->{$channel}
-	or die "$channel: unknown channel\n";
-
-
-my $term = Term::ReadLine->new("slack");
-my $listener = new threads( \&listener );
-
-my $saved_point;
-my $saved_line;
-
-sub rl_hide
+sub debug
 {
-	$saved_point = $term->{point};
-	$saved_line  = $term->{line_buffer};
+	my ($s,$j) = @_;
 
-	$term->rl_set_prompt("");
-	$term->{line_buffer} = "";
-	$term->rl_redisplay;
+	$term->hide();
+	print "$j->{type}: unhandled\n";
+	#print  "DEBUG:\n", Dumper($j);
+	$term->show();
 }
 
-sub rl_show
-{
-	if (defined $saved_point) {
-		$term->rl_set_prompt("> ");
-		$term->{line_buffer} = $saved_line;
-		$term->{point}       = $saved_point;
-		$term->redisplay;
-	}
-}
+my $last_user = '';
+my $last_channel = '';
 
-sub listener
+sub message
 {
-	warn "waiting for messages\n";
-	while (1)
+	my ($s,$j) = @_;
+
+	# skip anything not on the user's watch list
+	my $user = $j->{user};
+	my $channel = $j->{channel};
+	return unless $watch_list{$channel};
+
+	# hide the readline
+	$term->hide();
+
+	if ($user ne $last_user or $channel ne $last_channel)
 	{
-		sleep($sleep_interval);
+		$last_user = $user;
+		$last_channel = $channel;
+		my $username = $s->username($user);
+		my $channel_name = $s->channel($channel);
+		my $time = strftime("%F %T", localtime($j->{ts}));
 
-		my @lines = $s->messages()
-			or next;
-
-		rl_hide();
-		for my $line (@lines)
-		{
-			print LOCALCOLOR YELLOW "$line->[0]: ";
-
-			# filter the text
-			local $_ = $line->[1];
-
-			# replace entities
-			s/&lt;/>/msg;
-
-			# replace the user names
-			s/<\@(U[^>]*)>/LOCALCOLOR BOLD "@".$s->uid2user($1)/msge;
-				
-			print "$_\n";
-		}
-
-		# ask readline to redisplay
-		#$term->redisplay();
-		rl_show();
+		print LOCALCOLOR YELLOW BOLD "$username";
+		print LOCALCOLOR YELLOW "\@$channel_name: $time\n";
 	}
+
+	# filter the text
+	local $_ = $j->{text};
+
+	# replace entities
+	s/&lt;/>/msg;
+
+	# replace the user names
+	s/<\@(U[^>]*)>/LOCALCOLOR BOLD "@".$s->username($1)/msge;
+		
+	print "$_\n";
+
+	# ask readline to redisplay
+	$term->show();
 }
 
-my $prompt = "> ";
-$s->users();
+
+sub process_command
+{
+	my $line = shift;
+	if($line =~ m:^/join (.*)$:)
+	{
+		my $channel = $1;
+		my $id = $s->channel_id($channel);
+		unless($id)
+		{
+			warn "$channel: No such channel. Use /list\n";
+			return;
+		}
+		$s->{channel} = $id;
+		$watch_list{$id} = 1;
+		$AnyEvent::ReadLine::Gnu::prompt = "$channel> ";
+		$term->hide();
+		$term->show();
+		return;
+	}
+
+	if ($line =~ m:^/list:)
+	{
+		for my $c (keys %{$s->{channelnames}})
+		{
+			print "$c\n";
+		}
+		return;
+	}
+
+	if ($line =~ m:^/watch (.*)$:)
+	{
+		my $channel = $1;
+		my $id = $s->channel_id($channel);
+		unless($id)
+		{
+			warn "$channel: No such channel. Use /list\n";
+			return;
+		}
+		$watch_list{$id} = 1;
+		return;
+	}
+	if ($line =~ m:^/unwatch (.*)$:)
+	{
+		my $channel = $1;
+		my $id = $s->channel_id($channel);
+		unless($id)
+		{
+			warn "$channel: No such channel. Use /list\n";
+			return;
+		}
+		$watch_list{$id} = 0;
+		return;
+	}
+		
+
+	warn "Unknown command\n";
+}
+
 
 sub find_user
 {
 	my $user = shift;
-
-	for my $uid (keys %{$s->{users}})
-	{
-		next unless $s->{users}{$uid} eq $user;
-		return "<\@$uid>";
-	}
-
-	return "\@$user";
+	return "\@$user" unless exists $s->{usernames}{$user};
+	
+	my $t = "<\@" . $s->{usernames}{$user}{id} . ">";
+	return $t;
 }
 
-warn "Waiting for input\n";
-while( defined(my $line = $term->readline($prompt)) )
-{
-	# attempt to find any usernames
-	$line =~ s/\@(\w+)/find_user($1)/msge;
 
-	$s->send($line);
-}   
+$term = AnyEvent::ReadLine::Gnu->new(
+	prompt => "> ",
+	on_line	=> sub {
+		my $line = shift;
+		#warn "Read '$line'\n";
 
-__END__
+		if ($line =~ m:^/:)
+		{
+			process_command($line);
+		} elsif (not defined $s->{channel})
+		{
+			warn "No channel selected! Use /join to join a channel\n";
+		} else {
+			# attempt to find any usernames
+			$line =~ s/\@(\w+)/find_user($1)/msge;
+
+			$s->send($line);
+		}
+	},
+);
+
+
+my $last_j;
+
+$s->{verbose} = $verbose;
+
+$s->websocket(
+	hello => sub {
+		#warn "Connected!\n";
+	},
+	close	=> sub { 
+		warn "close method called\n";
+		exit(0);
+	},
+	presence_change => sub {
+		my ($s,$j) = @_;
+		$last_user = '';
+		$term->hide();
+		print LOCALCOLOR YELLOW BOLD $s->username($j->{user});
+		print ": $j->{presence}\n";
+		$term->show();
+	},
+	message => \&message,
+	user_typing => sub {},
+	channel_marked => sub {},
+	debug => \&debug,
+) or die "websocket failed\n";
+
