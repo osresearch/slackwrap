@@ -62,14 +62,24 @@ my $last_channel = '';
 sub message
 {
 	my ($s,$j) = @_;
+	my $edited = '';
 
 	# skip anything not on the user's watch list
-	my $user = $j->{user};
 	my $channel = $j->{channel};
 	return unless $watch_list{$channel};
 
+	if (exists $j->{subtype} and $j->{subtype} eq 'message_changed')
+	{
+		$j = $j->{message};
+		$edited = LOCALCOLOR RED " (edited)";
+	}
+
+	my $user = $j->{user};
+
 	# hide the readline
 	$term->hide();
+
+	warn Dumper($j) unless $user;
 
 	if ($user ne $last_user or $channel ne $last_channel)
 	{
@@ -92,7 +102,7 @@ sub message
 	# replace the user names
 	s/<\@(U[^>]*)>/LOCALCOLOR BOLD "@".$s->username($1)/msge;
 		
-	print "$_\n";
+	print "$_$edited\n";
 
 	# ask readline to redisplay
 	$term->show();
