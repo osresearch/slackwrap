@@ -68,10 +68,16 @@ sub message
 	my $channel = $j->{channel};
 	return unless $watch_list{$channel};
 
-	if (exists $j->{subtype} and $j->{subtype} eq 'message_changed')
+	if (exists $j->{subtype})
 	{
-		$j = $j->{message};
-		$edited = LOCALCOLOR RED " (edited)";
+		if ($j->{subtype} eq 'message_changed')
+		{
+			$j = $j->{message};
+			$edited = LOCALCOLOR RED " (edited)";
+		} elsif ($j->{subtype} eq 'message_deleted')
+		{
+			return;
+		}
 	}
 
 	my $user = $j->{user};
