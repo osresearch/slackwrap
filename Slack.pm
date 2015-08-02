@@ -207,7 +207,7 @@ sub send
 	print STDERR "post:", Dumper($j)
 		if $s->{verbose};
 
-	return 1;
+	return $j;
 }
 
 
