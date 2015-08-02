@@ -1,0 +1,71 @@
+#!/opt/local/bin/perl
+#
+# Make it blink!
+#
+use warnings;
+use strict;
+use FindBin '$Bin';
+use lib "$Bin/";
+use Slack;
+use Data::Dumper;
+use Time::HiRes 'usleep';
+use Term::ANSIColor 2.00 qw(:pushpop);
+use Getopt::Long qw(:config no_ignore_case require_order);
+use POSIX 'strftime';
+
+my $usage = <<"";
+Usage: $0 [options]
+Options:
+  -v | --verbose         Print debugging info on packets
+  -t | --token token     Authorization token (default is to read from file)
+  -u | --user name       User name to use as a bot
+  -c | --channel name    Channel to send to
+
+my $log = \*STDERR;
+my $token;
+my $channel;
+my $user;
+my $verbose;
+my %watch_list;
+
+GetOptions(
+	"t|token=s"	=> \$token,
+	"u|username=s"	=> \$user,
+	"c|channel=s"	=> \$channel,
+	"v|verbose+"	=> \$verbose,
+	"h|?|help"	=> sub { print $usage; exit 0; },
+) or die $usage;
+
+# Read the token from a file, unless it was specified on the command line
+$token ||= do "$Bin/slack.token";
+
+my $text = join ' ', @ARGV;
+
+my $s = Slack->new($token, $user)
+	or die "Unable to create slack\n";
+
+$s->{verbose} = $verbose;
+
+my $chan_id = $s->channels()->{$channel}
+	or die "$channel: No such channel\n";
+$s->{channel} = $chan_id;
+
+my $j = $s->send($text);
+
+print Dumper($j);
+
+while(1)
+{
+	$text = substr($text, 1) . substr($text, 0, 1);
+
+	usleep(500000);
+
+	$j = $s->api("chat.update",
+		channel => $j->{channel},
+		ts => $j->{ts},
+		text => $text,
+	) or return;
+
+
+	print Dumper($j);
+}
